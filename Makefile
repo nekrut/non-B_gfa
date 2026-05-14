@@ -2,9 +2,9 @@ PGMNAME = gfa
 #CC = icc
 CC = gcc -lm
 OBJ = $(PGMNAME).o \
-cdna.o     findIR.o    nulls.o           process_repeats.o \
+cdna.o     findIR.o \
 findAPR.o  findMR.o    print_gff_file.o  rcdna.o \
-findDR.o   findSTR.o   is_subset.o  print_tsv_file.o  read_fasta.o \
+findDR.o   findSTR.o   is_subset.o  print_tsv_file.o \
 findGQ.o   findZDNA.o  print_usage.c     read_mult_fasta.o
 # SIMD primitives in simd_match.h are static-inline so they fold into the
 # IR/MR/DR inner loops. Default build enables SSSE3 (universal on x86_64

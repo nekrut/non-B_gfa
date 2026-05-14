@@ -16,21 +16,6 @@
  *****************************************************
  */
 
-//rep then start
-int compar4(const void *a, const void *b) {
-	int i = 0;
-	i = ((REP *) a)->start - ((REP *) b)->start;
-	if (i == 0) i = ((REP *) a)->len - ((REP *) b)->len;
-	return (i);
-}
-
-void removeSTR(int nreps, int toRemove) {
-	int i = 0;
-	for (i = toRemove; i < nreps; i++) {
-		srep[i] = srep[i + 1];
-	}
-}
-
 //examines str sequence, returns int code for which non-B it can form
 int nonBstr(int start, int len) {
 	int code = 0;
@@ -114,22 +99,6 @@ int nonBstr(int start, int len) {
 		code = code + 8;
 	}
 	return (code);
-}
-
-int filterSTRs(int nSTRs) {
-	//sort by rep size then start
-	qsort(srep, nSTRs, sizeof(*srep), compar4);
-	//remove all that end before prev, will be
-	int i = 0;
-	for (i = 1; i < nSTRs; i++) {
-		if (srep[i].end <= srep[i - 1].end) {
-			removeSTR(nSTRs, i);
-			nSTRs--;
-			i--;
-		}
-	}
-
-	return (nSTRs);
 }
 
 int findSTR(int minSTR, int maxSTR, int minSTRlen, int minReps, int total_bases) {

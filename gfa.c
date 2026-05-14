@@ -202,7 +202,6 @@ int main(int argc, char *argv[]) {
 	void cdna(int ndna); //computes complement dna
 
 	//io functions
-	int read_fasta(FILE *dna_file, char fasta_title[]);
 	int read_mult_fasta(FILE *dna_file, int fasta, char fasta_title[]);
 	int get_fasta_count(FILE *dna_file);
 	int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out);
@@ -231,8 +230,6 @@ int main(int argc, char *argv[]) {
 //	int process_Atracts(int minAT, int nATs, int total_bases, BOOLEAN plus);
 
 	//motif post processing/filtering functions
-	int process_repeatsCentered(int nreps, char X);
-	int process_repeatsIncluded(int nreps, char X);
 	void is_subset(int nreps, char X, int max_loop, int limit);
 
 	//	char get_sequence(int start, int stop, int rep, char X, int strand){
