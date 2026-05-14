@@ -72,59 +72,99 @@ int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out) {
 	return (fasta_count);
 }
 
+/* Lookup table: maps ASCII bytes to (lowercase letter) for A-Za-z, 0 otherwise.
+ * Lets the body-read pass replace per-byte isalpha+tolower with a single
+ * load from this table. Built lazily on first use. */
+static unsigned char base_lut[256];
+static int base_lut_ready = 0;
+
+static void build_base_lut(void) {
+	int c;
+	for (c = 0; c < 256; c++) base_lut[c] = 0;
+	for (c = 'A'; c <= 'Z'; c++) base_lut[c] = (unsigned char)(c | 0x20);
+	for (c = 'a'; c <= 'z'; c++) base_lut[c] = (unsigned char) c;
+	base_lut_ready = 1;
+}
+
+/* Buffered FASTA reader. Replaces a getc-per-byte tokenizer that called
+ * isalpha+tolower on every byte. Reads 64 KB at a time, uses memchr to
+ * locate '>' and '\n', and a 256-byte lookup table to filter+downcase
+ * bases in bulk. Semantics preserved:
+ *   - fasta_title gets the first MAX_FASTA_SIZE chars of the header line
+ *     (between '>' and the trailing newline), null-padded.
+ *   - dna[] is filled with lowercase A-Za-z bytes for the chosen record;
+ *     other characters (digits, whitespace, punctuation) are skipped.
+ *   - returns base count for the record.
+ */
 int read_mult_fasta(FILE *dna_file, int fasta, char fasta_title[]) {
-	register int i;
-	int base, fasta_len;
-	char line[MAX_LINE + 1];
-	BOOLEAN start;
-	int fasta_count = 0;
+	enum { BUFSZ = 1 << 16 };
+	static unsigned char buf[BUFSZ];
+	size_t n = 0, pos = 0;
+	int i = 0;                /* base index into dna[] */
+	int records_seen = 0;     /* number of '>' chars consumed so far */
+	int target = fasta;       /* 1-based record we want */
+	int in_header = 0;        /* currently reading header bytes */
+	int header_written = 0;   /* bytes already copied into fasta_title */
+	int header_cap = MAX_FASTA_SIZE;
 
-	/* Declare Procedure */
-	//void nulls(char line[], int n);
+	if (!base_lut_ready) build_base_lut();
+	memset((char *) fasta_title, '\0', header_cap);
 
-	fasta_len = MAX_FASTA_SIZE;
-	start = TRUE;
-	i = 0;
-	//fprintf(stderr, "\n fasta number =%d \n", fasta);
-	if (fasta > 1) {
-		//advance to correct fasta section
-		while (fasta_count <= (fasta-1)) {
-			base = getc(dna_file);
-			if (base == '>') {
-				fasta_count++;
+	for (;;) {
+		if (pos >= n) {
+			n = fread(buf, 1, BUFSZ, dna_file);
+			pos = 0;
+			if (n == 0) break;        /* EOF */
+		}
+
+		if (in_header) {
+			/* Copy header bytes up to the next '\n'. */
+			unsigned char *nl = memchr(buf + pos, '\n', n - pos);
+			size_t avail = nl ? (size_t)(nl - (buf + pos)) : (n - pos);
+			if (records_seen == target && header_written < header_cap) {
+				size_t take = avail;
+				if (header_written + (int) take > header_cap)
+					take = header_cap - header_written;
+				memcpy(fasta_title + header_written, buf + pos, take);
+				header_written += (int) take;
+			}
+			pos += avail;
+			if (nl) {
+				pos += 1;             /* consume the newline */
+				in_header = 0;
+			}
+			continue;
+		}
+
+		/* Sequence body: scan for the next '>' which marks end of record. */
+		unsigned char *gt = memchr(buf + pos, '>', n - pos);
+		size_t body_end = gt ? (size_t)(gt - buf) : n;
+
+		if (records_seen == target) {
+			/* This is the record we want; filter+downcase its bytes into dna[]. */
+			size_t k;
+			for (k = pos; k < body_end; k++) {
+				unsigned char b = base_lut[buf[k]];
+				if (b) dna[i++] = b;
 			}
 		}
-		ungetc(base, dna_file);
-	}
 
-	while ((base = getc(dna_file)) != EOF) {
-		switch (base) {
-			case '>': /* if (start) get header information
-			 else break and return */
-			if (start) {
-				if (fgets(line, MAX_LINE, dna_file) != NULL) {
-					/* crack some part of header and make title */
-					memset((char *) fasta_title, '\0', fasta_len);
-					//nulls(fasta_title, fasta_len);
-					if (strlen(line) < fasta_len) fasta_len = strlen(line) - 1;
-					strncpy(fasta_title, &line[0], fasta_len);
-				}
-				start = FALSE;
+		pos = body_end;
+		if (gt) {
+			pos += 1;                 /* consume '>' */
+			records_seen++;
+			if (records_seen > target) {
+				/* We've finished the target record. */
+				return i;
 			}
-			else {
-				ungetc(base, dna_file);
-				fprintf(stderr, " INFO: Program read %d bases \n", i);
-				return (i);
-			}
-				break;
-			default: /* look for DNA sequence */
-			if (isalpha(base)) {
-				dna[i] = tolower(base);
-				i++;
-			}
-				break;
+			in_header = 1;
 		}
 	}
-	//fprintf(stderr, " INFO: Program read %d bases \n", i);
-	return (i);
+
+	/* EOF reached while reading the target record (or before reaching it). */
+	if (records_seen < target) {
+		fprintf(stderr, " WARNING: requested FASTA record %d but file ended after %d\n",
+				target, records_seen);
+	}
+	return i;
 }
