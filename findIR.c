@@ -39,14 +39,21 @@ int findIR(int mincrf, int cspacer, int cut, int shortSpacer, int total_bases) {
 	for (strti = mincrf; strti <= (total_bases - mincrf); strti++) {
 		maxSP = min(cspacer,(total_bases-(strti+mincrf)));
 		for (sp = 0; sp <= maxSP; sp++) {
+			/* Inline byte-0 fast-path: skip the SIMD entry on first-byte
+			 * mismatch (~3/4 of positions on random DNA). */
 			int max_len = strti + 1;
 			int rhs_cap = total_bases - strti - sp - 1;
 			if (rhs_cap < max_len) max_len = rhs_cap;
-			if (max_len < 0) max_len = 0;
-			k = reverse_forward_match_n_on_right(
-					(const unsigned char *) &dna[strti],
-					(const unsigned char *) &dna3[strti + sp + 1],
-					max_len);
+			if (max_len <= 0
+					|| dna[strti] != dna3[strti + sp + 1]
+					|| dna[strti + sp + 1] == 'n') {
+				k = 0;
+			} else {
+				k = reverse_forward_match_n_on_right(
+						(const unsigned char *) &dna[strti],
+						(const unsigned char *) &dna3[strti + sp + 1],
+						max_len);
+			}
 			i = strti - k;
 			j = strti + sp + 1 + k;
 			if (k >= mincrf) {

@@ -50,16 +50,29 @@ int findDR(int mindir, int maxdir, int dspacer, int total_bases) {
 			//watch for end of sequence
 			spMax = min(dspacer,lasti-strti);
 			for (sp = spMin; sp <= spMax; sp++) {
-				int max_len = size;
-				int rhs_cap = total_bases - strti - size - sp;
-				if (rhs_cap < max_len) max_len = rhs_cap;
-				if (max_len < 0) max_len = 0;
-				k = forward_match_n_on_a(
-						(const unsigned char *) &dna[strti],
-						(const unsigned char *) &dna[strti + size + sp],
-						max_len);
-				i = strti + k;
-				j = strti + size + sp + k;
+				/* Inline byte-0 fast-path: most (size, sp) pairs on real DNA
+				 * fail at the first byte. The static-inline SIMD helper is
+				 * cheap, but its m128-constant setup still costs cycles. A
+				 * scalar byte compare here lets us skip the SIMD entry for
+				 * the ~3/4 of positions where dna[strti] doesn't match. */
+				unsigned char b0 = (unsigned char) dna[strti];
+				if (b0 == (unsigned char) 'n'
+						|| (unsigned char) dna[strti + size + sp] != b0) {
+					k = 0;
+					i = strti;
+					j = strti + size + sp;
+				} else {
+					int max_len = size;
+					int rhs_cap = total_bases - strti - size - sp;
+					if (rhs_cap < max_len) max_len = rhs_cap;
+					if (max_len < 0) max_len = 0;
+					k = forward_match_n_on_a(
+							(const unsigned char *) &dna[strti],
+							(const unsigned char *) &dna[strti + size + sp],
+							max_len);
+					i = strti + k;
+					j = strti + size + sp + k;
+				}
 				if (k == size) {//DR found!
 					totlen = k;
 					if (sp == 0) {
