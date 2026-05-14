@@ -54,7 +54,16 @@ done
 ```
 
 If `make` succeeds and the example run produces 14 files identical to the
-ones inside `test_files.tar`, the installation is good.
+ones inside `test_files.tar`, the installation is good. For a more thorough
+sanity check (golden + sharded multi-record + IUPAC handling + argument
+validation, 44 assertions), run:
+
+```sh
+tests/regression.sh
+```
+
+The same script runs on every push under `.github/workflows/build-and-test.yml`
+in three CFLAGS configurations (default SSSE3 / portable scalar / AVX2).
 
 ---
 

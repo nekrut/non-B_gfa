@@ -1,0 +1,65 @@
+name: build-and-test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: build (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default Makefile flags: SSSE3 baseline. This is the build that
+          # ships if nobody touches CFLAGS, so it must always be green.
+          - label: ssse3-default
+            cflags: ""
+
+          # Generic x86_64 (no SIMD intrinsics in simd_match.h fire).
+          # Exercises the scalar fallback paths in the same source files.
+          - label: scalar
+            cflags: "-O2"
+
+          # AVX2 path -- gcc on the GitHub Actions runners enables this with
+          # -march=native because the runner is a fairly modern Xeon.
+          - label: avx2
+            cflags: "-O2 -march=native"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          gcc --version
+          uname -a
+          cat /proc/cpuinfo | grep -m1 'model name'
+          # Report which ISAs the compiler will pick up.
+          echo | gcc ${{ matrix.cflags }} -dM -E - \
+            | grep -E '__SSE2__|__SSSE3__|__SSE4|__AVX__|__AVX2__' \
+            | sort
+
+      - name: Build
+        run: |
+          if [ -n "${{ matrix.cflags }}" ]; then
+            make CFLAGS="${{ matrix.cflags }}"
+          else
+            make
+          fi
+
+      - name: Run regression suite
+        run: tests/regression.sh
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gfa-${{ matrix.label }}-failure
+          path: |
+            gfa
+            tests/
+          if-no-files-found: ignore
