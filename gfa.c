@@ -174,6 +174,9 @@ int main(int argc, char *argv[]) {
 	BOOLEAN CHROM = FALSE; //chromosome name given as com line argument?
 	BOOLEAN KEEP_TIME = TRUE; //for benchmarking etc.
 
+	//Optional: process only one FASTA record (1-based). 0 = all records.
+	int record_to_process = 0;
+
 	//time stuff
 	time_t startTime;
 
@@ -517,6 +520,18 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
+		//Select a single FASTA record by 1-based index (for sharded parallel runs)
+		if (strncmp(argv[i], "-record", 7) == 0) {
+			if (argv[i + 1] != NULL) {
+				sscanf(argv[i + 1], "%d", &record_to_process);
+				fprintf(stderr, "-record value = %d\n", record_to_process);
+			} else {
+				fprintf(stderr,
+						"FATAL ERROR: No argument for -record switch\n");
+				FATAL = TRUE;
+			}
+		}
+
 		//command line boolean overrides
 		if (strncmp(argv[i], "-skipZ", 6) == 0) {
 			DO_findZ = FALSE;
@@ -806,12 +821,27 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "Fasta Sections = %d\n", fasta_count);
 	dna_file = fopen(dna_filename, "r");
 
+	int fasta_start = 1;
+	int fasta_end = fasta_count;
+	if (record_to_process > 0) {
+		if (record_to_process > fasta_count) {
+			fprintf(stderr,
+					"FATAL ERROR: -record %d exceeds number of FASTA records (%d)\n",
+					record_to_process, fasta_count);
+			exit(21);
+		}
+		fasta_start = fasta_end = record_to_process;
+	}
+	//emit per-record output (close files after each motif) when only one
+	//record will be processed in this invocation
+	BOOLEAN output_per_record = (fasta_count == 1) || (record_to_process > 0);
+
 	/************************************
 	 * Master Loop for each FASTA entry *
 	 ************************************
 	 */
 	//for each fasta section
-	for (fasta = 1; fasta <= fasta_count; fasta++) {
+	for (fasta = fasta_start; fasta <= fasta_end; fasta++) {
 
 		//reset dna_file
 		fclose(dna_file);
@@ -850,8 +880,9 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (CHROM) {
-			//append fasta section number
-			if (fasta_count > 1) {
+			//append fasta section number (only for multi-record concatenated runs;
+			//-record sharding keeps the user-supplied chrom verbatim)
+			if (!output_per_record) {
 				char tmp_str[12];
 				memset((char *) tmp_str, '\0', 12);
 				//nulls(tmp_str, 12);
@@ -929,7 +960,7 @@ int main(int argc, char *argv[]) {
 				is_subset(ireps, 'I', maxCruciformSpacer, minCruciformRep);
 				fprintf(stderr, "Done Cruciform search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (ireps > 0) {
 					print_gff_file(gffout_fileI, ireps, seq_title, 'I',
 							total_bases);
@@ -970,7 +1001,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "GQs found = %d\n", greps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (greps > 0) {
 					print_gff_file(gffout_fileG, greps, seq_title, 'G',
 							total_bases);
@@ -1008,7 +1039,7 @@ int main(int argc, char *argv[]) {
 				is_subset(mreps, 'M', maxTriplexSpacer, minTriplexYRpercent);
 				fprintf(stderr, "Done Triplex search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (mreps > 0) {
 					print_gff_file(gffout_fileM, mreps, seq_title, 'M',
 							total_bases);
@@ -1046,7 +1077,7 @@ int main(int argc, char *argv[]) {
 				is_subset(dreps, 'D', maxSlippedSpacer, -999);
 				fprintf(stderr, "Done Slipped search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (dreps > 0) {
 					print_gff_file(gffout_fileD, dreps, seq_title, 'D',
 							total_bases);
@@ -1081,7 +1112,7 @@ int main(int argc, char *argv[]) {
 				is_subset(zreps, 'Z', -999, minKVscore);
 				fprintf(stderr, "Done KV Z-DNA\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (zreps > 0) {
 					print_gff_file(gffout_fileZ, zreps, seq_title, 'Z',
 							total_bases);
@@ -1112,7 +1143,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "STRs found = %d\n", sreps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (sreps > 0) {
 					print_gff_file(gffout_fileS, sreps, seq_title, 'S',
 							total_bases);
@@ -1142,7 +1173,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "APRs found = %d\n", areps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (areps > 0) {
 					print_gff_file(gffout_fileA, areps, seq_title, 'A',
 							total_bases);
@@ -1157,7 +1188,7 @@ int main(int argc, char *argv[]) {
 		 ***   Output the REPEATS *********
 		 **********************************/
 
-		if (fasta_count > 1) { //if multiple fasta, write all at end
+		if (!output_per_record) { //multi-record run: write all at end
 			if (DO_findIR) {
 				if (ireps > 0)
 					print_gff_file(gffout_fileI, ireps, seq_title, 'I',
@@ -1235,7 +1266,7 @@ int main(int argc, char *argv[]) {
 	}
 	//      	fprintf(stdout, "are we here?\n");
         fclose(dna_file);
-	if (fasta_count > 1) {
+	if (!output_per_record) {
 	  if (DO_findIR) {
 		fclose(gffout_fileI);
 		fclose(tsvout_fileI);
