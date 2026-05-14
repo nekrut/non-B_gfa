@@ -838,7 +838,11 @@ int main(int argc, char *argv[]) {
 	dna_file = fopen(dna_filename, "r");
 
 	{
-		size_t dna_cap = (size_t) max_seq_len + 1;
+		//Extra slack at the end of each DNA buffer so SIMD 32-byte loads in
+		//findIR/MR/DR may safely read up to 31 bytes past total_bases without
+		//going past the calloc'd region. The trailing bytes stay zero, which
+		//compares-unequal to any base in {a,c,g,t,n}.
+		size_t dna_cap = (size_t) max_seq_len + 1 + 64;
 		dna  = (char *) calloc(dna_cap, 1);
 		dna2 = (char *) calloc(dna_cap, 1);
 		dna3 = (char *) calloc(dna_cap, 1);

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <strings.h>
 #include "gfa.h"
+#include "simd_match.h"
 
 /******************************
  *  findMR Repeat Finder   ****
@@ -38,15 +39,16 @@ int findMR(int minmir, int mspacer, int total_bases) {
 	for (strti = minmir; strti <= (total_bases - minmir); strti++) {
 		maxSP = min(mspacer,(total_bases-(strti+minmir)));
 		for (sp = 0; sp <= maxSP; sp++) {
-			i = strti;
-			k = 0;
-			j = strti + sp + 1;
-			while ((dna[i] == dna[j]) && (j < (total_bases)) && (i >= 0)
-					&& (dna[j] != 'n')) {
-				k++;
-				j++;
-				i--;
-			}
+			int max_len = strti + 1;
+			int rhs_cap = total_bases - strti - sp - 1;
+			if (rhs_cap < max_len) max_len = rhs_cap;
+			if (max_len < 0) max_len = 0;
+			k = reverse_forward_match_n_on_right(
+					(const unsigned char *) &dna[strti],
+					(const unsigned char *) &dna[strti + sp + 1],
+					max_len);
+			i = strti - k;
+			j = strti + sp + 1 + k;
 			if (k >= minmir) {
 				tmpStart = ((strti - k) + 2);// in ncbi coordinates (+1 to array cords)
 				tmpStop = (strti + k + sp + 1);// in ncbi coordinates (+1 to array cords)

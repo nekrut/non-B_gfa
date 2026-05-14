@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <strings.h>
 #include "gfa.h"
+#include "simd_match.h"
 #include <time.h>
 
 /******************************
@@ -49,15 +50,16 @@ int findDR(int mindir, int maxdir, int dspacer, int total_bases) {
 			//watch for end of sequence
 			spMax = min(dspacer,lasti-strti);
 			for (sp = spMin; sp <= spMax; sp++) {
-				j = strti + size + sp;
-				i = strti;
-				k = 0;
-				while (dna[i] == dna[j] && k < size && dna[i] != 'n' && j
-						< total_bases) { //using while so we can not compare all if not required
-					k++;
-					j++;
-					i++;
-				}
+				int max_len = size;
+				int rhs_cap = total_bases - strti - size - sp;
+				if (rhs_cap < max_len) max_len = rhs_cap;
+				if (max_len < 0) max_len = 0;
+				k = forward_match_n_on_a(
+						(const unsigned char *) &dna[strti],
+						(const unsigned char *) &dna[strti + size + sp],
+						max_len);
+				i = strti + k;
+				j = strti + size + sp + k;
 				if (k == size) {//DR found!
 					totlen = k;
 					if (sp == 0) {

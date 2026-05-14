@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <strings.h>
 #include "gfa.h"
+#include "simd_match.h"
 
 /*******************************************************************
  *  findIR eXplorer (crux)                                      *
@@ -38,15 +39,16 @@ int findIR(int mincrf, int cspacer, int cut, int shortSpacer, int total_bases) {
 	for (strti = mincrf; strti <= (total_bases - mincrf); strti++) {
 		maxSP = min(cspacer,(total_bases-(strti+mincrf)));
 		for (sp = 0; sp <= maxSP; sp++) {
-			i = strti;
-			k = 0;
-			j = strti + sp + 1;
-			while ((dna[i] == dna3[j]) && (j < (total_bases)) && (i >= 0)
-					&& (dna[j] != 'n')) {
-				k++;
-				j++;
-				i--;
-			}
+			int max_len = strti + 1;
+			int rhs_cap = total_bases - strti - sp - 1;
+			if (rhs_cap < max_len) max_len = rhs_cap;
+			if (max_len < 0) max_len = 0;
+			k = reverse_forward_match_n_on_right(
+					(const unsigned char *) &dna[strti],
+					(const unsigned char *) &dna3[strti + sp + 1],
+					max_len);
+			i = strti - k;
+			j = strti + sp + 1 + k;
 			if (k >= mincrf) {
 				if ((k <= cut) && (sp > shortSpacer)) {//check for short IR spacers
 					continue;
