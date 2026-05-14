@@ -143,6 +143,43 @@ static inline int reverse_forward_match_n_on_right(const unsigned char *left_end
 	return k;
 }
 
+/* Forward-forward match without the 'n' stop. Used by findSTR where the
+ * original strncmp-based loop matches 'n' == 'n' as equal (rather than
+ * stopping). Returns the length of the longest prefix where a[k] == b[k],
+ * stopping at the first mismatch or k == max_len.
+ */
+static inline int forward_match(const unsigned char *a,
+                                const unsigned char *b,
+                                int max_len) {
+	int k = 0;
+#if defined(__AVX2__)
+	{
+		while (k + 32 <= max_len) {
+			__m256i va = _mm256_loadu_si256((const __m256i *)(a + k));
+			__m256i vb = _mm256_loadu_si256((const __m256i *)(b + k));
+			__m256i eq = _mm256_cmpeq_epi8(va, vb);
+			uint32_t mask = ~(uint32_t) _mm256_movemask_epi8(eq);
+			if (mask) return k + __builtin_ctz(mask);
+			k += 32;
+		}
+	}
+#endif
+#if defined(__SSE2__)
+	{
+		while (k + 16 <= max_len) {
+			__m128i va = _mm_loadu_si128((const __m128i *)(a + k));
+			__m128i vb = _mm_loadu_si128((const __m128i *)(b + k));
+			__m128i eq = _mm_cmpeq_epi8(va, vb);
+			uint32_t mask = (~(uint32_t) _mm_movemask_epi8(eq)) & 0xFFFFu;
+			if (mask) return k + __builtin_ctz(mask);
+			k += 16;
+		}
+	}
+#endif
+	while (k < max_len && a[k] == b[k]) k++;
+	return k;
+}
+
 /* Broadcast-match: compare a single byte `a` against up to 16 bytes at `b`,
  * returning a 16-bit bitmask where bit k is set iff b[k] == a AND b[k] != 'n'
  * AND k < n. n must be in [0, 16]. b must be a valid 16-byte load (the DNA
