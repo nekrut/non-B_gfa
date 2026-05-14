@@ -137,10 +137,16 @@ int findDR(int mindir, int maxdir, int dspacer, int total_bases) {
 				totlen = size;
 				int j = strti + size + sp + size;
 				if (sp == 0) {
+					/* Original BTR tail was `while (dna[i] == dna[j])`
+					 * with no 'n' filter -- two 'n's at the same offset
+					 * counted as a match. Use forward_match (no n stop)
+					 * rather than forward_match_n_on_a so we preserve
+					 * that semantics; the latter would stop on 'n' and
+					 * undercount totlen on n-containing input. */
 					int btr_max = total_bases - j;
 					int i_btr = strti + size;
 					if (btr_max > 0) {
-						int btr_k = forward_match_n_on_a(
+						int btr_k = forward_match(
 								(const unsigned char *) &dna[i_btr],
 								(const unsigned char *) &dna[j],
 								btr_max);

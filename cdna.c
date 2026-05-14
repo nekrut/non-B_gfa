@@ -45,6 +45,23 @@ void cdna(int ndna) {
 		__m128i in = _mm_loadu_si128((const __m128i *) (dna + i));
 		__m128i idx = _mm_and_si128(in, NIBBLE);
 		__m128i out = _mm_shuffle_epi8(LUT, idx);
+		/* The low-nibble LUT collides on non-acgtn letters that share
+		 * a nibble with one of a/c/g/t (e.g. 's' has nibble 3 like
+		 * 'c', so would be miscomplemented to 'g'). Build an acgtn
+		 * equality mask and AND it in so any other lowercase byte
+		 * stays zero -- matching the original switch's behaviour of
+		 * leaving the dna3 slot untouched (calloc'd zero) for non-
+		 * acgtn input. */
+		__m128i eqa = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'a'));
+		__m128i eqc = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'c'));
+		__m128i eqg = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'g'));
+		__m128i eqt = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 't'));
+		__m128i eqn = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'n'));
+		__m128i valid = _mm_or_si128(
+				_mm_or_si128(_mm_or_si128(eqa, eqc),
+						_mm_or_si128(eqg, eqt)),
+				eqn);
+		out = _mm_and_si128(out, valid);
 		_mm_storeu_si128((__m128i *) (dna3 + i), out);
 	}
 #endif

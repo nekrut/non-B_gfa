@@ -45,6 +45,20 @@ void rcdna(int ndna) {
 		__m128i in = _mm_loadu_si128((const __m128i *) (dna + i));
 		__m128i idx = _mm_and_si128(in, NIBBLE);
 		__m128i comp = _mm_shuffle_epi8(LUT, idx);
+		/* Mask out non-acgtn bytes that share a low nibble with one
+		 * of a/c/g/t (e.g. 's'/'w'/'d'/'q'); see cdna.c for the same
+		 * fixup. The original scalar switch left dna2 slots untouched
+		 * (calloc'd zero) for these. */
+		__m128i eqa = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'a'));
+		__m128i eqc = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'c'));
+		__m128i eqg = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'g'));
+		__m128i eqt = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 't'));
+		__m128i eqn = _mm_cmpeq_epi8(in, _mm_set1_epi8((char) 'n'));
+		__m128i valid = _mm_or_si128(
+				_mm_or_si128(_mm_or_si128(eqa, eqc),
+						_mm_or_si128(eqg, eqt)),
+				eqn);
+		comp = _mm_and_si128(comp, valid);
 		__m128i rev = _mm_shuffle_epi8(comp, REV);
 		_mm_storeu_si128((__m128i *) (dna2 + ndna - i - 16), rev);
 	}

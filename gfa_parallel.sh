@@ -10,8 +10,11 @@
 # Pass any additional gfa switches after -out; they are forwarded to every
 # worker. Do NOT pass -record, -chrom (per-record chrom is derived from the
 # fasta title), or -skipWGET (it is forced on to avoid N concurrent wget calls).
-
-set -e
+#
+# Failure handling: if a worker exits non-zero, stitching still runs over the
+# shards that did finish, and the per-shard .stderr logs of failed workers are
+# preserved next to the output prefix for inspection. The wrapper itself
+# exits non-zero whenever at least one shard failed.
 
 JOBS=4
 SEQ=
@@ -53,9 +56,12 @@ fi
 echo "$0: $NREC records, $JOBS parallel workers" >&2
 
 # Fan out: one worker per record. xargs -P limits concurrency.
-seq 1 "$NREC" | xargs -n1 -P"$JOBS" -I{} sh -c \
+# xargs returns 123 if any child failed; we keep going to stitch the
+# shards that DID complete and report the failure at the end.
+xargs_rc=0
+seq 1 "$NREC" | xargs -P"$JOBS" -I{} sh -c \
     "$GFA -skipWGET -seq \"$SEQ\" -out \"${OUT}_rec{}\" -record {} $PASSTHROUGH \
-        >\"${OUT}_rec{}.stdout\" 2>\"${OUT}_rec{}.stderr\""
+        >\"${OUT}_rec{}.stdout\" 2>\"${OUT}_rec{}.stderr\"" || xargs_rc=$?
 
 # Stitch: concatenate per-type files. Order of records is preserved.
 for TYPE in IR MR DR GQ Z STR APR; do
@@ -85,7 +91,21 @@ for TYPE in IR MR DR GQ Z STR APR; do
     done
 done
 
-# Clean up worker logs
-rm -f "${OUT}"_rec*.stdout "${OUT}"_rec*.stderr
+# Worker stdout is just the gfa progress messages -- always disposable.
+# Worker stderr is the diagnostic trail: keep it only for shards that failed.
+for N in $(seq 1 "$NREC"); do
+    rm -f "${OUT}_rec${N}.stdout"
+    if [ -s "${OUT}_rec${N}.stderr" ] && \
+            grep -qi 'fatal\|error\|out of bounds' "${OUT}_rec${N}.stderr"; then
+        echo "$0: worker $N reported errors, see ${OUT}_rec${N}.stderr" >&2
+    else
+        rm -f "${OUT}_rec${N}.stderr"
+    fi
+done
+
+if [ "$xargs_rc" -ne 0 ]; then
+    echo "$0: one or more workers failed (xargs rc=$xargs_rc); stitched outputs from successful shards only" >&2
+    exit "$xargs_rc"
+fi
 
 echo "$0: done. Stitched outputs: ${OUT}_<TYPE>.{gff,tsv}" >&2

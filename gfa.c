@@ -516,6 +516,12 @@ int main(int argc, char *argv[]) {
 			if (argv[i + 1] != NULL) {
 				sscanf(argv[i + 1], "%d", &record_to_process);
 				fprintf(stderr, "-record value = %d\n", record_to_process);
+				if (record_to_process < 1) {
+					fprintf(stderr,
+							"FATAL ERROR: -record must be a 1-based positive index (got %d)\n",
+							record_to_process);
+					FATAL = TRUE;
+				}
 			} else {
 				fprintf(stderr,
 						"FATAL ERROR: No argument for -record switch\n");
