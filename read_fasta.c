@@ -13,7 +13,7 @@
  * Defined in main module file to avoid stack overflow problem
  * can easily be 300Mb
  */
-extern char dna[];
+extern char *dna;
 
 int read_fasta(FILE *dna_file, char fasta_title[]) {
 	register int i;

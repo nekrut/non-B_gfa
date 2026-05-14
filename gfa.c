@@ -33,34 +33,27 @@
  ********************************************************************
  */
 
-//A_Tract atract[16000000];
-//short A_Tract_Strt[20000000];
-potential_Bent_DNA pAPRs[5 * MAX_REPS + 1];
+//All large buffers are heap-allocated by main() — see allocate_buffers().
+//Storage was previously ~1.5 GB of BSS globals, capped at 300 Mbp of input.
+potential_Bent_DNA *pAPRs;
 
-G_Island gisle[5 * MAX_REPS + 1];
-G_Island rcgisle[5 * MAX_REPS + 1]; //reverse comp, actually + strand C islands
-const G_Island null_gisle; //defaults to null, used to reset the stuct for each fasta
-
-//potential_G_Quads pGQs[MAX_REPS + 1];
-//const potential_G_Quads null_pgq;//defaults to null, used to reset the stuct for each fasta
-//potential_G_Quads rcpGQs[MAX_REPS + 1];//reverse comp
+G_Island *gisle;
+G_Island *rcgisle;
 
 //global so we only have to call findGQs and findgislands once
 int nGisls;
 int nCisls;
 
-char dna[MAX_DNA + 1];
-char dna2[MAX_DNA + 1]; //reverse complement strand
-char dna3[MAX_DNA + 1]; //complement strand
-REP mrep[MAX_REPS + 1]; //mirror
-//REP *irep = malloc(2*MAX_REPS * sizeof(REP));
-REP irep[MAX_REPS + 1]; //inverted
-REP drep[MAX_REPS + 1]; //direct
-REP grep[MAX_REPS + 1]; //g-quadraplex
-REP zrep[MAX_REPS + 1]; //z-dna
-REP srep[MAX_REPS + 1]; //str
-REP arep[MAX_REPS + 1]; //a-phased-repeat
-const REP null_rep; //defaults to null, used to reset the stuct for each fasta
+char *dna;
+char *dna2; //reverse complement strand
+char *dna3; //complement strand
+REP *mrep; //mirror
+REP *irep; //inverted
+REP *drep; //direct
+REP *grep; //g-quadraplex
+REP *zrep; //z-dna
+REP *srep; //str
+REP *arep; //a-phased-repeat
 
 int main(int argc, char *argv[]) {
 
@@ -212,6 +205,7 @@ int main(int argc, char *argv[]) {
 	int read_fasta(FILE *dna_file, char fasta_title[]);
 	int read_mult_fasta(FILE *dna_file, int fasta, char fasta_title[]);
 	int get_fasta_count(FILE *dna_file);
+	int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out);
 	void print_gff_file(FILE *gffout_file, int nreps, char chrom[], char X,
 			int total_bases);
 	void print_tsv_file(FILE *tsvout_file, int nreps, char chrom[], char X,
@@ -810,16 +804,41 @@ int main(int argc, char *argv[]) {
 	}
 
 	/*************************************
-	 * Initialize and READ dna array   ***
-	 * dna array defined global/extern ***
-	 * to avoid stack overflow issues  ***
+	 * Index FASTA and allocate buffers **
 	 *************************************
+	 * One buffered pass finds the record count and the longest record's
+	 * sequence length. dna/dna2/dna3 are sized to that length + 1; REP and
+	 * island buffers are sized to MAX_REPS. These were previously ~1.5 GB of
+	 * BSS and capped input at 300 Mbp.
 	 */
-	memset((char *) dna, '\0', MAX_DNA);
-
-	fasta_count = get_fasta_count(dna_file);
-	fprintf(stderr, "Fasta Sections = %d\n", fasta_count);
+	int max_seq_len = 0;
+	fasta_count = get_fasta_count_ex(dna_file, &max_seq_len);
+	fprintf(stderr, "Fasta Sections = %d, longest record = %d bp\n",
+			fasta_count, max_seq_len);
+	fclose(dna_file);
 	dna_file = fopen(dna_filename, "r");
+
+	{
+		size_t dna_cap = (size_t) max_seq_len + 1;
+		dna  = (char *) calloc(dna_cap, 1);
+		dna2 = (char *) calloc(dna_cap, 1);
+		dna3 = (char *) calloc(dna_cap, 1);
+		irep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		mrep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		drep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		grep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		zrep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		srep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		arep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		gisle   = (G_Island *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(G_Island));
+		rcgisle = (G_Island *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(G_Island));
+		pAPRs   = (potential_Bent_DNA *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(potential_Bent_DNA));
+		if (!dna || !dna2 || !dna3 || !irep || !mrep || !drep || !grep ||
+				!zrep || !srep || !arep || !gisle || !rcgisle || !pAPRs) {
+			fprintf(stderr, "FATAL ERROR: out of memory allocating buffers\n");
+			exit(22);
+		}
+	}
 
 	int fasta_start = 1;
 	int fasta_end = fasta_count;
@@ -912,25 +931,9 @@ int main(int argc, char *argv[]) {
 			rcdna(total_bases);
 		}
 
-		//fprintf(stderr, "Starting Repeat Array Initializations\n");
-		/*******************************************
-		 * (re)Initialize repeat arrays   **************
-		 *******************************************
-		 */
-		for (i = 0; i < MAX_REPS + 1; i++) {
-			irep[i] = null_rep;
-			mrep[i] = null_rep;
-			drep[i] = null_rep;
-			grep[i] = null_rep;
-			zrep[i] = null_rep;
-			srep[i] = null_rep;
-			arep[i] = null_rep;
-			gisle[i] = null_gisle;
-			//pGQs[i] = null_pgq;
-			rcgisle[i] = null_gisle;
-			//rcpGQs[i] = null_pgq;
-		}
-		//fprintf(stderr, "Repeat Arrays Initialized\n");
+		//REP/island buffers are calloc'd once at startup; finders write
+		//slots [0..nreps) and consumers only read that range, so no
+		//per-record re-zeroing is needed.
 
 		/**********************************
 		 *** Inverted Repeat Section   ****

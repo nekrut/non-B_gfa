@@ -13,40 +13,62 @@
  * Defined in main module file to avoid stack overflow problem
  * can easily be 300Mb
  */
-extern char dna[];
+extern char *dna;
 
-//returns
+//Scan the file once: count records and compute the longest record's sequence
+//length (bases only, comments/whitespace skipped). The returned max is used to
+//size the heap dna[] buffer to the actual need rather than a 300 Mbp hard cap.
+int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out);
+
 int get_fasta_count(FILE *dna_file) {
-	int base, fasta_count;
-	fasta_count = 0;
+	int max_seq_len = 0;
+	return get_fasta_count_ex(dna_file, &max_seq_len);
+}
 
-	//check for empty file and FASTA start
-	if ((base = getc(dna_file)) != EOF) {
-		if (base != '>') {
-			fprintf(stderr, " base read =");
-			putc(base, stderr);
-			fprintf(stderr, ".\n");
-			fprintf(stderr, " FATAL ERROR: Sequence file NOT in FASTA format\n");
-			exit(88);
+int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out) {
+	enum { BUFSZ = 1 << 16 };
+	static unsigned char buf[BUFSZ];
+	size_t n;
+	int fasta_count = 0;
+	int cur_seq_len = 0;
+	int max_seq_len = 0;
+	int in_header = 0;
+	int first_byte_seen = 0;
+
+	while ((n = fread(buf, 1, BUFSZ, dna_file)) > 0) {
+		size_t i;
+		if (!first_byte_seen) {
+			if (buf[0] != '>') {
+				fprintf(stderr, " base read =%c.\n", buf[0]);
+				fprintf(stderr,
+						" FATAL ERROR: Sequence file NOT in FASTA format\n");
+				exit(88);
+			}
+			first_byte_seen = 1;
 		}
-		else
-			ungetc(base, dna_file);
+		for (i = 0; i < n; i++) {
+			unsigned char c = buf[i];
+			if (c == '>') {
+				if (fasta_count > 0 && cur_seq_len > max_seq_len) {
+					max_seq_len = cur_seq_len;
+				}
+				cur_seq_len = 0;
+				fasta_count++;
+				in_header = 1;
+			} else if (in_header) {
+				if (c == '\n') in_header = 0;
+			} else if (isalpha(c)) {
+				cur_seq_len++;
+			}
+		}
 	}
-	else {
+	if (cur_seq_len > max_seq_len) max_seq_len = cur_seq_len;
+
+	if (!first_byte_seen) {
 		fprintf(stderr, " End of Sequence file!\n");
-		fclose(dna_file);
 		return (0);
 	}
-
-	//count fasta starts
-	while ((base = getc(dna_file)) != EOF) {
-		if (base == '>') {
-			fasta_count++;
-		}
-	}
-
-	//reset input file
-	//fclose(dna_file);
+	*max_seq_len_out = max_seq_len;
 	return (fasta_count);
 }
 
