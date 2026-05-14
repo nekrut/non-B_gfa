@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "gfa.h"
+#include "simd_match.h"
 
 /*******************************************
  * Start looking for Short Tandem Repeats **
@@ -15,21 +16,6 @@
  * sort on the repeat size (loop) then start**********
  *****************************************************
  */
-
-//rep then start
-int compar4(const void *a, const void *b) {
-	int i = 0;
-	i = ((REP *) a)->start - ((REP *) b)->start;
-	if (i == 0) i = ((REP *) a)->len - ((REP *) b)->len;
-	return (i);
-}
-
-void removeSTR(int nreps, int toRemove) {
-	int i = 0;
-	for (i = toRemove; i < nreps; i++) {
-		srep[i] = srep[i + 1];
-	}
-}
 
 //examines str sequence, returns int code for which non-B it can form
 int nonBstr(int start, int len) {
@@ -116,22 +102,6 @@ int nonBstr(int start, int len) {
 	return (code);
 }
 
-int filterSTRs(int nSTRs) {
-	//sort by rep size then start
-	qsort(srep, nSTRs, sizeof(*srep), compar4);
-	//remove all that end before prev, will be
-	int i = 0;
-	for (i = 1; i < nSTRs; i++) {
-		if (srep[i].end <= srep[i - 1].end) {
-			removeSTR(nSTRs, i);
-			nSTRs--;
-			i--;
-		}
-	}
-
-	return (nSTRs);
-}
-
 int findSTR(int minSTR, int maxSTR, int minSTRlen, int minReps, int total_bases) {
 	register int i, j;
 	j = 0;
@@ -147,16 +117,23 @@ int findSTR(int minSTR, int maxSTR, int minSTRlen, int minReps, int total_bases)
 			i++;
 		}
 		for (rpsz = minSTR; rpsz <= maxSTR; rpsz++) {//for each rep size
-			reps = 1;
-			j = i + rpsz;
-			while (strncmp(&dna[i], &dna[j], rpsz) == 0) {
-				reps++;
-				j = j + rpsz;
-				if (j + rpsz >= total_bases) {
-					fprintf(stderr, "out of bounds 1\n");
-					break;
-				}
-			}
+			/* SIMD LCP: the original strncmp loop counts how many full
+			 * rpsz-byte periods of dna[i..i+rpsz-1] repeat starting at
+			 * j=i+rpsz. Equivalent: LCP(dna+i, dna+i+rpsz) gives the
+			 * number of identical bytes, so reps = 1 + LCP/rpsz. The
+			 * SIMD helper handles the byte-compare 16/32 at a time.
+			 *
+			 * Note we use forward_match (no 'n' stop) rather than
+			 * forward_match_n_on_a, because the original strncmp loop
+			 * treats 'n' == 'n' as equal. */
+			int lcp_max = total_bases - (i + rpsz);
+			if (lcp_max < 0) lcp_max = 0;
+			int lcp = forward_match(
+					(const unsigned char *) &dna[i],
+					(const unsigned char *) &dna[i + rpsz],
+					lcp_max);
+			reps = 1 + (lcp / rpsz);
+			j = i + rpsz * reps;
 			if (reps >= minReps) {
 				remainder = 0;
 				rs = i;

@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
-#include <math.h>
 #include "gfa.h"
 
 /*******************************************
@@ -76,12 +75,12 @@ int findGQ(int minGQ, int maxGQspacer) {
 		}
 		for (i = 0; i < nIls; i++) {
 			conIls = 1;
-			npos = (int) (floor((islands[i].len + 1) / (minGQ + 1))); //how many runs of min size will fit in island i?
+			npos = ((islands[i].len + 1) / (minGQ + 1)); //how many runs of min size will fit in island i?
 			i2 = i + 1;
 			while (((islands[i2].strt - (islands[i2 - 1].strt
 					+ islands[i2 - 1].len)) <= maxGQspacer) && (i2 < nIls)) {//next island is close enough
 				conIls++;
-				npos += (int) (floor((islands[i2].len + 1) / (minGQ + 1)));
+				npos += ((islands[i2].len + 1) / (minGQ + 1));
 				i2++;
 			}
 			if (npos >= 4) {
@@ -89,14 +88,14 @@ int findGQ(int minGQ, int maxGQspacer) {
 				maxGQ = minGQ;
 				for (j = i; j<i2; j++) {
 					for (k = islands[j].len; k>maxGQ; k--) {//count down from largest possible in island
-						nposMax = (int) (floor((islands[j].len + 1) / (k + 1)));
+						nposMax = ((islands[j].len + 1) / (k + 1));
 						for (m = j+1; m<i2; m++) {//through rest of islands in current GQ motif
-							nposMax+= (int) (floor((islands[m].len + 1) / (k + 1)));
+							nposMax += ((islands[m].len + 1) / (k + 1));
 							if (nposMax>=4) {
 								maxGQ = k;
 								break;
 							}
-							if ((int) (floor((islands[m].len + 1) / (k + 1)))==0) {
+							if (((islands[m].len + 1) / (k + 1)) == 0) {
 								if(islands[m+1].strt>(islands[m-1].strt + islands[m-1].len + maxGQspacer)) {//next island is not close enough
 									break;
 								}

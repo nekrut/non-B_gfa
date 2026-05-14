@@ -33,34 +33,27 @@
  ********************************************************************
  */
 
-//A_Tract atract[16000000];
-//short A_Tract_Strt[20000000];
-potential_Bent_DNA pAPRs[5 * MAX_REPS + 1];
+//All large buffers are heap-allocated by main() — see allocate_buffers().
+//Storage was previously ~1.5 GB of BSS globals, capped at 300 Mbp of input.
+potential_Bent_DNA *pAPRs;
 
-G_Island gisle[5 * MAX_REPS + 1];
-G_Island rcgisle[5 * MAX_REPS + 1]; //reverse comp, actually + strand C islands
-const G_Island null_gisle; //defaults to null, used to reset the stuct for each fasta
-
-//potential_G_Quads pGQs[MAX_REPS + 1];
-//const potential_G_Quads null_pgq;//defaults to null, used to reset the stuct for each fasta
-//potential_G_Quads rcpGQs[MAX_REPS + 1];//reverse comp
+G_Island *gisle;
+G_Island *rcgisle;
 
 //global so we only have to call findGQs and findgislands once
 int nGisls;
 int nCisls;
 
-char dna[MAX_DNA + 1];
-char dna2[MAX_DNA + 1]; //reverse complement strand
-char dna3[MAX_DNA + 1]; //complement strand
-REP mrep[MAX_REPS + 1]; //mirror
-//REP *irep = malloc(2*MAX_REPS * sizeof(REP));
-REP irep[MAX_REPS + 1]; //inverted
-REP drep[MAX_REPS + 1]; //direct
-REP grep[MAX_REPS + 1]; //g-quadraplex
-REP zrep[MAX_REPS + 1]; //z-dna
-REP srep[MAX_REPS + 1]; //str
-REP arep[MAX_REPS + 1]; //a-phased-repeat
-const REP null_rep; //defaults to null, used to reset the stuct for each fasta
+char *dna;
+char *dna2; //reverse complement strand
+char *dna3; //complement strand
+REP *mrep; //mirror
+REP *irep; //inverted
+REP *drep; //direct
+REP *grep; //g-quadraplex
+REP *zrep; //z-dna
+REP *srep; //str
+REP *arep; //a-phased-repeat
 
 int main(int argc, char *argv[]) {
 
@@ -174,6 +167,9 @@ int main(int argc, char *argv[]) {
 	BOOLEAN CHROM = FALSE; //chromosome name given as com line argument?
 	BOOLEAN KEEP_TIME = TRUE; //for benchmarking etc.
 
+	//Optional: process only one FASTA record (1-based). 0 = all records.
+	int record_to_process = 0;
+
 	//time stuff
 	time_t startTime;
 
@@ -206,9 +202,9 @@ int main(int argc, char *argv[]) {
 	void cdna(int ndna); //computes complement dna
 
 	//io functions
-	int read_fasta(FILE *dna_file, char fasta_title[]);
 	int read_mult_fasta(FILE *dna_file, int fasta, char fasta_title[]);
 	int get_fasta_count(FILE *dna_file);
+	int get_fasta_count_ex(FILE *dna_file, int *max_seq_len_out);
 	void print_gff_file(FILE *gffout_file, int nreps, char chrom[], char X,
 			int total_bases);
 	void print_tsv_file(FILE *tsvout_file, int nreps, char chrom[], char X,
@@ -234,8 +230,6 @@ int main(int argc, char *argv[]) {
 //	int process_Atracts(int minAT, int nATs, int total_bases, BOOLEAN plus);
 
 	//motif post processing/filtering functions
-	int process_repeatsCentered(int nreps, char X);
-	int process_repeatsIncluded(int nreps, char X);
 	void is_subset(int nreps, char X, int max_loop, int limit);
 
 	//	char get_sequence(int start, int stop, int rep, char X, int strand){
@@ -517,6 +511,24 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
+		//Select a single FASTA record by 1-based index (for sharded parallel runs)
+		if (strncmp(argv[i], "-record", 7) == 0) {
+			if (argv[i + 1] != NULL) {
+				sscanf(argv[i + 1], "%d", &record_to_process);
+				fprintf(stderr, "-record value = %d\n", record_to_process);
+				if (record_to_process < 1) {
+					fprintf(stderr,
+							"FATAL ERROR: -record must be a 1-based positive index (got %d)\n",
+							record_to_process);
+					FATAL = TRUE;
+				}
+			} else {
+				fprintf(stderr,
+						"FATAL ERROR: No argument for -record switch\n");
+				FATAL = TRUE;
+			}
+		}
+
 		//command line boolean overrides
 		if (strncmp(argv[i], "-skipZ", 6) == 0) {
 			DO_findZ = FALSE;
@@ -794,24 +806,87 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	/*************************************
-	 * Initialize and READ dna array   ***
-	 * dna array defined global/extern ***
-	 * to avoid stack overflow issues  ***
-	 *************************************
-	 */
-	memset((char *) dna, '\0', MAX_DNA);
+	//Switch output streams to fully-buffered with a 1 MB buffer so the
+	//~10-fprintf-per-row chains in print_gff_file/print_tsv_file don't
+	//hit libc's default 4 KB buffer for every field.
+	{
+		size_t outbufsz = 1 << 20;
+		FILE *outs[] = {
+			DO_findIR  ? gffout_fileI : NULL, DO_findIR  ? tsvout_fileI : NULL,
+			DO_findMR  ? gffout_fileM : NULL, DO_findMR  ? tsvout_fileM : NULL,
+			DO_findDR  ? gffout_fileD : NULL, DO_findDR  ? tsvout_fileD : NULL,
+			DO_findGQ  ? gffout_fileG : NULL, DO_findGQ  ? tsvout_fileG : NULL,
+			DO_findZ   ? gffout_fileZ : NULL, DO_findZ   ? tsvout_fileZ : NULL,
+			DO_findSTR ? gffout_fileS : NULL, DO_findSTR ? tsvout_fileS : NULL,
+			DO_findAPR ? gffout_fileA : NULL, DO_findAPR ? tsvout_fileA : NULL,
+		};
+		for (size_t bi = 0; bi < sizeof(outs)/sizeof(outs[0]); bi++) {
+			if (outs[bi]) setvbuf(outs[bi], NULL, _IOFBF, outbufsz);
+		}
+	}
 
-	fasta_count = get_fasta_count(dna_file);
-	fprintf(stderr, "Fasta Sections = %d\n", fasta_count);
+	/*************************************
+	 * Index FASTA and allocate buffers **
+	 *************************************
+	 * One buffered pass finds the record count and the longest record's
+	 * sequence length. dna/dna2/dna3 are sized to that length + 1; REP and
+	 * island buffers are sized to MAX_REPS. These were previously ~1.5 GB of
+	 * BSS and capped input at 300 Mbp.
+	 */
+	int max_seq_len = 0;
+	fasta_count = get_fasta_count_ex(dna_file, &max_seq_len);
+	fprintf(stderr, "Fasta Sections = %d, longest record = %d bp\n",
+			fasta_count, max_seq_len);
+	fclose(dna_file);
 	dna_file = fopen(dna_filename, "r");
+
+	{
+		//Extra slack at the end of each DNA buffer so SIMD 32-byte loads in
+		//findIR/MR/DR may safely read up to 31 bytes past total_bases without
+		//going past the calloc'd region. The trailing bytes stay zero, which
+		//compares-unequal to any base in {a,c,g,t,n}.
+		size_t dna_cap = (size_t) max_seq_len + 1 + 64;
+		dna  = (char *) calloc(dna_cap, 1);
+		dna2 = (char *) calloc(dna_cap, 1);
+		dna3 = (char *) calloc(dna_cap, 1);
+		irep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		mrep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		drep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		grep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		zrep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		srep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		arep = (REP *) calloc((size_t) MAX_REPS + 1, sizeof(REP));
+		gisle   = (G_Island *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(G_Island));
+		rcgisle = (G_Island *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(G_Island));
+		pAPRs   = (potential_Bent_DNA *) calloc((size_t) 5 * MAX_REPS + 1, sizeof(potential_Bent_DNA));
+		if (!dna || !dna2 || !dna3 || !irep || !mrep || !drep || !grep ||
+				!zrep || !srep || !arep || !gisle || !rcgisle || !pAPRs) {
+			fprintf(stderr, "FATAL ERROR: out of memory allocating buffers\n");
+			exit(22);
+		}
+	}
+
+	int fasta_start = 1;
+	int fasta_end = fasta_count;
+	if (record_to_process > 0) {
+		if (record_to_process > fasta_count) {
+			fprintf(stderr,
+					"FATAL ERROR: -record %d exceeds number of FASTA records (%d)\n",
+					record_to_process, fasta_count);
+			exit(21);
+		}
+		fasta_start = fasta_end = record_to_process;
+	}
+	//emit per-record output (close files after each motif) when only one
+	//record will be processed in this invocation
+	BOOLEAN output_per_record = (fasta_count == 1) || (record_to_process > 0);
 
 	/************************************
 	 * Master Loop for each FASTA entry *
 	 ************************************
 	 */
 	//for each fasta section
-	for (fasta = 1; fasta <= fasta_count; fasta++) {
+	for (fasta = fasta_start; fasta <= fasta_end; fasta++) {
 
 		//reset dna_file
 		fclose(dna_file);
@@ -850,8 +925,9 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (CHROM) {
-			//append fasta section number
-			if (fasta_count > 1) {
+			//append fasta section number (only for multi-record concatenated runs;
+			//-record sharding keeps the user-supplied chrom verbatim)
+			if (!output_per_record) {
 				char tmp_str[12];
 				memset((char *) tmp_str, '\0', 12);
 				//nulls(tmp_str, 12);
@@ -881,25 +957,9 @@ int main(int argc, char *argv[]) {
 			rcdna(total_bases);
 		}
 
-		//fprintf(stderr, "Starting Repeat Array Initializations\n");
-		/*******************************************
-		 * (re)Initialize repeat arrays   **************
-		 *******************************************
-		 */
-		for (i = 0; i < MAX_REPS + 1; i++) {
-			irep[i] = null_rep;
-			mrep[i] = null_rep;
-			drep[i] = null_rep;
-			grep[i] = null_rep;
-			zrep[i] = null_rep;
-			srep[i] = null_rep;
-			arep[i] = null_rep;
-			gisle[i] = null_gisle;
-			//pGQs[i] = null_pgq;
-			rcgisle[i] = null_gisle;
-			//rcpGQs[i] = null_pgq;
-		}
-		//fprintf(stderr, "Repeat Arrays Initialized\n");
+		//REP/island buffers are calloc'd once at startup; finders write
+		//slots [0..nreps) and consumers only read that range, so no
+		//per-record re-zeroing is needed.
 
 		/**********************************
 		 *** Inverted Repeat Section   ****
@@ -929,7 +989,7 @@ int main(int argc, char *argv[]) {
 				is_subset(ireps, 'I', maxCruciformSpacer, minCruciformRep);
 				fprintf(stderr, "Done Cruciform search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (ireps > 0) {
 					print_gff_file(gffout_fileI, ireps, seq_title, 'I',
 							total_bases);
@@ -970,7 +1030,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "GQs found = %d\n", greps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (greps > 0) {
 					print_gff_file(gffout_fileG, greps, seq_title, 'G',
 							total_bases);
@@ -1008,7 +1068,7 @@ int main(int argc, char *argv[]) {
 				is_subset(mreps, 'M', maxTriplexSpacer, minTriplexYRpercent);
 				fprintf(stderr, "Done Triplex search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (mreps > 0) {
 					print_gff_file(gffout_fileM, mreps, seq_title, 'M',
 							total_bases);
@@ -1046,7 +1106,7 @@ int main(int argc, char *argv[]) {
 				is_subset(dreps, 'D', maxSlippedSpacer, -999);
 				fprintf(stderr, "Done Slipped search\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (dreps > 0) {
 					print_gff_file(gffout_fileD, dreps, seq_title, 'D',
 							total_bases);
@@ -1081,7 +1141,7 @@ int main(int argc, char *argv[]) {
 				is_subset(zreps, 'Z', -999, minKVscore);
 				fprintf(stderr, "Done KV Z-DNA\n\n");
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (zreps > 0) {
 					print_gff_file(gffout_fileZ, zreps, seq_title, 'Z',
 							total_bases);
@@ -1112,7 +1172,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "STRs found = %d\n", sreps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (sreps > 0) {
 					print_gff_file(gffout_fileS, sreps, seq_title, 'S',
 							total_bases);
@@ -1142,7 +1202,7 @@ int main(int argc, char *argv[]) {
 			} else {
 				fprintf(stderr, "APRs found = %d\n", areps);
 			}
-			if (fasta_count == 1) {
+			if (output_per_record) {
 				if (areps > 0) {
 					print_gff_file(gffout_fileA, areps, seq_title, 'A',
 							total_bases);
@@ -1157,7 +1217,7 @@ int main(int argc, char *argv[]) {
 		 ***   Output the REPEATS *********
 		 **********************************/
 
-		if (fasta_count > 1) { //if multiple fasta, write all at end
+		if (!output_per_record) { //multi-record run: write all at end
 			if (DO_findIR) {
 				if (ireps > 0)
 					print_gff_file(gffout_fileI, ireps, seq_title, 'I',
@@ -1235,7 +1295,7 @@ int main(int argc, char *argv[]) {
 	}
 	//      	fprintf(stdout, "are we here?\n");
         fclose(dna_file);
-	if (fasta_count > 1) {
+	if (!output_per_record) {
 	  if (DO_findIR) {
 		fclose(gffout_fileI);
 		fclose(tsvout_fileI);

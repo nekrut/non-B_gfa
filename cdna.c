@@ -3,39 +3,79 @@
 #include <strings.h>
 #include "gfa.h"
 
-//extern char dna[];
-//extern char dna2[];
+#if defined(__SSSE3__)
+#  include <tmmintrin.h>
+#endif
 
+/* Build the forward complement strand into dna3[].
+ *
+ * Mapping (lowercase): a<->t, c<->g, n<->n. The original code used a
+ * per-byte switch; here we use a SIMD shuffle-table lookup keyed on the
+ * low nibble of each ASCII byte, which uniquely identifies the five
+ * letters of interest (a=1, c=3, t=4, g=7, n=14). _mm_shuffle_epi8
+ * applies the lookup 16 bytes per instruction. Other letters map to
+ * zero, matching the calloc'd dna3 buffer the original code left for
+ * non-acgtn bytes.
+ */
 void cdna(int ndna) {
 
-	register int i;
+	int i = 0;
 
-	/*******************************
-	 Form the reverse complements **
-	 ******************************/
-	for (i = 0; i < ndna; i++) {
+#if defined(__SSSE3__)
+	const __m128i LUT = _mm_setr_epi8(
+			0,           /*  0 */
+			(char) 't',  /*  1 'a'->'t' */
+			0,           /*  2 */
+			(char) 'g',  /*  3 'c'->'g' */
+			(char) 'a',  /*  4 't'->'a' */
+			0,           /*  5 */
+			0,           /*  6 */
+			(char) 'c',  /*  7 'g'->'c' */
+			0,           /*  8 */
+			0,           /*  9 */
+			0,           /* 10 */
+			0,           /* 11 */
+			0,           /* 12 */
+			0,           /* 13 */
+			(char) 'n',  /* 14 'n'->'n' */
+			0            /* 15 */);
+	const __m128i NIBBLE = _mm_set1_epi8(0x0F);
+	/* Per-letter broadcast constants used by the acgtn equality mask.
+	 * The low-nibble LUT collides on non-acgtn letters that share a
+	 * nibble with one of a/c/g/t (e.g. 's' has nibble 3 like 'c', so
+	 * would be miscomplemented to 'g'). Building an acgtn equality
+	 * mask and AND'ing it in keeps any other lowercase byte zero --
+	 * matching the original switch's behaviour of leaving the dna3
+	 * slot untouched (calloc'd zero) for non-acgtn input. */
+	const __m128i VA = _mm_set1_epi8((char) 'a');
+	const __m128i VC = _mm_set1_epi8((char) 'c');
+	const __m128i VG = _mm_set1_epi8((char) 'g');
+	const __m128i VT = _mm_set1_epi8((char) 't');
+	const __m128i VN = _mm_set1_epi8((char) 'n');
+
+	for (; i + 16 <= ndna; i += 16) {
+		__m128i in = _mm_loadu_si128((const __m128i *) (dna + i));
+		__m128i idx = _mm_and_si128(in, NIBBLE);
+		__m128i out = _mm_shuffle_epi8(LUT, idx);
+		__m128i valid = _mm_or_si128(
+				_mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(in, VA),
+						_mm_cmpeq_epi8(in, VC)),
+						_mm_or_si128(_mm_cmpeq_epi8(in, VG),
+								_mm_cmpeq_epi8(in, VT))),
+				_mm_cmpeq_epi8(in, VN));
+		out = _mm_and_si128(out, valid);
+		_mm_storeu_si128((__m128i *) (dna3 + i), out);
+	}
+#endif
+	for (; i < ndna; i++) {
 		switch (dna[i]) {
-			/* just complement in this section */
-			case 'a':
-			dna3[i] = 't';
-				break;
-			case 'c':
-			dna3[i] = 'g';
-				break;
-			case 'g':
-			dna3[i] = 'c';
-				break;
-			case 't':
-			dna3[i] = 'a';
-				break;
-			case 'n':
-			dna3[i] = 'n';
-				break;
+			case 'a': dna3[i] = 't'; break;
+			case 'c': dna3[i] = 'g'; break;
+			case 'g': dna3[i] = 'c'; break;
+			case 't': dna3[i] = 'a'; break;
+			case 'n': dna3[i] = 'n'; break;
 		}
 	}
-	/****************************
-	 End of reverse complements **
-	 ****************************/
 	fprintf(stderr, "Complement Finished:%d\n", i);
 	return;
 } /* END */

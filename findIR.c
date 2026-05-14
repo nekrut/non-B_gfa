@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 #include "gfa.h"
+#include "simd_match.h"
 
 /*******************************************************************
  *  findIR eXplorer (crux)                                      *
@@ -34,19 +36,61 @@ int findIR(int mincrf, int cspacer, int cut, int shortSpacer, int total_bases) {
 	/*******************************************
 	 * Start looking for inverted repeats*******
 	 *******************************************
-	 */
+	 *
+	 * Per-strti structure: precompute LCP[sp] = longest reverse-forward
+	 * match starting at (dna[strti], dna3[strti+sp+1]) for each sp in
+	 * [0, cspacer], using broadcast_match_mask_16 to filter the ~75% of
+	 * sp values whose first byte mismatches dna[strti]. If max(LCP) <
+	 * mincrf, no IR is possible at this strti and the sp loop is
+	 * skipped. Otherwise the original sp loop runs unchanged but reads
+	 * k from the table instead of recomputing it. */
+	int LCP_CAP = cspacer + 1;
+	int *LCP = (int *) calloc((size_t) LCP_CAP, sizeof(int));
+	if (!LCP) {
+		fprintf(stderr, "FATAL: findIR could not allocate LCP table\n");
+		exit(23);
+	}
+
 	for (strti = mincrf; strti <= (total_bases - mincrf); strti++) {
 		maxSP = min(cspacer,(total_bases-(strti+mincrf)));
-		for (sp = 0; sp <= maxSP; sp++) {
-			i = strti;
-			k = 0;
-			j = strti + sp + 1;
-			while ((dna[i] == dna3[j]) && (j < (total_bases)) && (i >= 0)
-					&& (dna[j] != 'n')) {
-				k++;
-				j++;
-				i--;
+		if (maxSP < 0) continue;
+
+		unsigned char b0 = (unsigned char) dna[strti];
+		if (b0 == (unsigned char) 'n') continue;
+
+		memset(LCP, 0, (size_t) (maxSP + 1) * sizeof(int));
+		int max_lcp = 0;
+
+		for (int chunk = 0; chunk <= maxSP; chunk += 16) {
+			int chunk_n = (maxSP + 1) - chunk;
+			if (chunk_n > 16) chunk_n = 16;
+			uint32_t mask = broadcast_match_mask_16(
+					b0,
+					(const unsigned char *) &dna3[strti + 1 + chunk],
+					chunk_n);
+			while (mask) {
+				int off = __builtin_ctz(mask);
+				mask &= mask - 1;
+				int sp_i = chunk + off;
+				int max_len = strti + 1;
+				int rhs_cap = total_bases - strti - sp_i - 1;
+				if (rhs_cap < max_len) max_len = rhs_cap;
+				if (max_len < mincrf) continue;
+				int lcp = reverse_forward_match_n_on_right(
+						(const unsigned char *) &dna[strti],
+						(const unsigned char *) &dna3[strti + sp_i + 1],
+						max_len);
+				LCP[sp_i] = lcp;
+				if (lcp > max_lcp) max_lcp = lcp;
 			}
+		}
+
+		if (max_lcp < mincrf) continue;
+
+		for (sp = 0; sp <= maxSP; sp++) {
+			k = LCP[sp];
+			i = strti - k;
+			j = strti + sp + 1 + k;
 			if (k >= mincrf) {
 				if ((k <= cut) && (sp > shortSpacer)) {//check for short IR spacers
 					continue;
@@ -177,5 +221,6 @@ int findIR(int mincrf, int cspacer, int cut, int shortSpacer, int total_bases) {
 			}//if ndx > maxcBack + 2
 		}//if maxcBack>0
 	}//if k>minmir
+	free(LCP);
 	return (ndx);
 }/* END of findIR*/

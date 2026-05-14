@@ -128,6 +128,11 @@ void print_usage(char arg0[]) {
 			"	-skipWGET; Do not make wget call to php scripts to signify completion. \n");
 	fprintf(stderr,
 			"	-doCHMOD; Run a system call to chomd command (664) on output files. \n");
+	fprintf(
+			stderr,
+			"	-record <N>; Process only the Nth FASTA record (1-based). Use a unique -out\n"
+			"	             prefix per shard so concurrent invocations do not collide.\n"
+			"	             Intended for node-scope parallelism (see gfa_parallel.sh).\n");
 	fprintf(stderr,
 			"********************************************************************\n");
 	fprintf(stderr, "         EXAMPLE:\n");

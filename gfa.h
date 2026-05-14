@@ -2,7 +2,10 @@
 #define GFA_H_
 #define MAX_REPS 2500000
 //#define MAX_REPSIZE 1500
-#define MAX_DNA 300000000
+//MAX_DNA used to be a hard 300 Mbp cap on a static dna[] buffer; dna/dna2/dna3
+//are now heap-allocated to the longest record's actual length and the cap is
+//gone.
+//#define MAX_DNA 300000000
 //#define MAX_BINS 50000
 #define MAXCOL 101
 #define MAX_FASTA_SIZE 80
@@ -89,40 +92,24 @@ typedef struct G_Island {
 extern int nGisls;
 extern int nCisls;
 
-extern char dna[MAX_DNA + 1];
-extern char dna2[MAX_DNA + 1];//reverse complement DNA
-extern char dna3[MAX_DNA + 1];//complement DNA
-//extern char mdna[MAX_DNA + 1];
+//Heap-allocated by main() at startup. dna/dna2/dna3 are sized to the longest
+//record in the input; REP and island buffers are sized to MAX_REPS.
+extern char *dna;
+extern char *dna2; //reverse complement DNA
+extern char *dna3; //complement DNA
 
-extern G_Island gisle[5*MAX_REPS + 1];
-//extern potential_G_Quads pGQs[MAX_REPS + 1];
-extern G_Island rcgisle[5*MAX_REPS + 1];
-//extern potential_G_Quads rcpGQs[MAX_REPS + 1];
+extern G_Island *gisle;
+extern G_Island *rcgisle;
 
-//extern A_Tract	atract[16000000];
-//extern short A_Tract_Strt[20000000];
+extern potential_Bent_DNA *pAPRs;
 
-extern potential_Bent_DNA pAPRs[5*MAX_REPS + 1];
-
-//extern REP *irep;
-
-
-
-//extern REP *irep = malloc(2*MAX_REPS * sizeof(REP));
-
-//if (irep == NULL) {
-//  (void)fprintf(stderr, "ERROR: Malloc failed");
-//  (void)exit(EXIT_FAILURE);    /* or return EXIT_FAILURE; */
-//}
-
-
-extern REP irep[MAX_REPS + 1];
-extern REP mrep[MAX_REPS + 1];
-extern REP drep[MAX_REPS + 1];
-extern REP grep[MAX_REPS + 1];
-extern REP zrep[MAX_REPS + 1];
-extern REP srep[MAX_REPS + 1];
-extern REP arep[MAX_REPS + 1];
+extern REP *irep;
+extern REP *mrep;
+extern REP *drep;
+extern REP *grep;
+extern REP *zrep;
+extern REP *srep;
+extern REP *arep;
 
 #ifndef max
 	#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
