@@ -32,9 +32,6 @@ void print_tsv_file(FILE *tsv_file, int nreps, char chrom[], char X,
 	register int i;
 	REP *rep;
 
-	printf("%d\n", nreps);
-	printf("%c\n", X);
-
 	char rep_type[100];
 	char short_rep_type[6];//very bad things happen if these arn't big enough!!
 

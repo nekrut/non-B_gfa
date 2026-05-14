@@ -803,6 +803,25 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	//Switch output streams to fully-buffered with a 1 MB buffer so the
+	//~10-fprintf-per-row chains in print_gff_file/print_tsv_file don't
+	//hit libc's default 4 KB buffer for every field.
+	{
+		size_t outbufsz = 1 << 20;
+		FILE *outs[] = {
+			DO_findIR  ? gffout_fileI : NULL, DO_findIR  ? tsvout_fileI : NULL,
+			DO_findMR  ? gffout_fileM : NULL, DO_findMR  ? tsvout_fileM : NULL,
+			DO_findDR  ? gffout_fileD : NULL, DO_findDR  ? tsvout_fileD : NULL,
+			DO_findGQ  ? gffout_fileG : NULL, DO_findGQ  ? tsvout_fileG : NULL,
+			DO_findZ   ? gffout_fileZ : NULL, DO_findZ   ? tsvout_fileZ : NULL,
+			DO_findSTR ? gffout_fileS : NULL, DO_findSTR ? tsvout_fileS : NULL,
+			DO_findAPR ? gffout_fileA : NULL, DO_findAPR ? tsvout_fileA : NULL,
+		};
+		for (size_t bi = 0; bi < sizeof(outs)/sizeof(outs[0]); bi++) {
+			if (outs[bi]) setvbuf(outs[bi], NULL, _IOFBF, outbufsz);
+		}
+	}
+
 	/*************************************
 	 * Index FASTA and allocate buffers **
 	 *************************************
