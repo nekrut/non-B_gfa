@@ -49,30 +49,39 @@ int findDR(int mindir, int maxdir, int dspacer, int total_bases) {
 			spMin = max(0,((end-strti)-(size*2))+2);
 			//watch for end of sequence
 			spMax = min(dspacer,lasti-strti);
-			for (sp = spMin; sp <= spMax; sp++) {
-				/* Inline byte-0 fast-path: most (size, sp) pairs on real DNA
-				 * fail at the first byte. The static-inline SIMD helper is
-				 * cheap, but its m128-constant setup still costs cycles. A
-				 * scalar byte compare here lets us skip the SIMD entry for
-				 * the ~3/4 of positions where dna[strti] doesn't match. */
-				unsigned char b0 = (unsigned char) dna[strti];
-				if (b0 == (unsigned char) 'n'
-						|| (unsigned char) dna[strti + size + sp] != b0) {
-					k = 0;
-					i = strti;
-					j = strti + size + sp;
-				} else {
-					int max_len = size;
-					int rhs_cap = total_bases - strti - size - sp;
-					if (rhs_cap < max_len) max_len = rhs_cap;
-					if (max_len < 0) max_len = 0;
-					k = forward_match_n_on_a(
-							(const unsigned char *) &dna[strti],
-							(const unsigned char *) &dna[strti + size + sp],
-							max_len);
-					i = strti + k;
-					j = strti + size + sp + k;
-				}
+			if (spMax < spMin) continue;
+
+			/* Broadcast-match: compute the bitmask of sp values in
+			 * [spMin..spMax] where dna[strti+size+sp] == dna[strti]. One
+			 * SIMD load+cmpeq replaces the spMax-spMin+1 byte-compare
+			 * iterations the scalar inner loop would do; we then iterate
+			 * only the set bits. Requires spMax-spMin < 16. */
+			unsigned char b0 = (unsigned char) dna[strti];
+			int n_sp = spMax - spMin + 1;
+			uint32_t mask;
+			if (n_sp <= 16) {
+				mask = broadcast_match_mask_16(
+						b0,
+						(const unsigned char *) &dna[strti + size + spMin],
+						n_sp);
+			} else {
+				mask = ~(uint32_t) 0;  // very rare: spacer range > 16
+			}
+
+			while (mask) {
+				int sp_offset = __builtin_ctz(mask);
+				mask &= mask - 1;
+				sp = spMin + sp_offset;
+				int max_len = size;
+				int rhs_cap = total_bases - strti - size - sp;
+				if (rhs_cap < max_len) max_len = rhs_cap;
+				if (max_len < 0) max_len = 0;
+				k = forward_match_n_on_a(
+						(const unsigned char *) &dna[strti],
+						(const unsigned char *) &dna[strti + size + sp],
+						max_len);
+				i = strti + k;
+				j = strti + size + sp + k;
 				if (k == size) {//DR found!
 					totlen = k;
 					if (sp == 0) {
@@ -95,6 +104,13 @@ int findDR(int mindir, int maxdir, int dspacer, int total_bases) {
 					end = j - 1;
 					sp = dspacer;
 					size = sizeMin;
+					/* Exit the broadcast-mask loop: the original scalar code
+					 * relied on setting size=sizeMin to break the outer
+					 * size-loop on the NEXT for-step. With the mask loop
+					 * iterating bits, we have to break out explicitly --
+					 * otherwise the next mask bit triggers an extension at
+					 * size=0 and the divisor in `totlen / size` is zero. */
+					break;
 				}
 			}
 		}

@@ -143,4 +143,42 @@ static inline int reverse_forward_match_n_on_right(const unsigned char *left_end
 	return k;
 }
 
+/* Broadcast-match: compare a single byte `a` against up to 16 bytes at `b`,
+ * returning a 16-bit bitmask where bit k is set iff b[k] == a AND b[k] != 'n'
+ * AND k < n. n must be in [0, 16]. b must be a valid 16-byte load (the DNA
+ * buffer's 64-byte trailing-zero slack makes that safe near the high end of
+ * the allocation).
+ *
+ * Used by findDR to flatten the sp byte-compare loop: spMax+1 is typically
+ * ~11, so one SIMD load+cmpeq+movemask replaces an 11-iteration scalar loop
+ * of byte loads and conditional branches, and the caller iterates only the
+ * sp positions that pass the first-byte check.
+ */
+static inline uint32_t broadcast_match_mask_16(unsigned char a,
+                                               const unsigned char *b,
+                                               int n) {
+	if (n <= 0) return 0;
+	if (a == (unsigned char) 'n') return 0;
+#if defined(__SSE2__)
+	{
+		const __m128i av = _mm_set1_epi8((char) a);
+		__m128i vb = _mm_loadu_si128((const __m128i *) b);
+		__m128i eq = _mm_cmpeq_epi8(vb, av);
+		uint32_t mask = (uint32_t) _mm_movemask_epi8(eq);
+		if (n < 16) mask &= ((uint32_t) 1 << n) - 1;
+		return mask;
+	}
+#else
+	{
+		uint32_t mask = 0;
+		int k;
+		int lim = n < 16 ? n : 16;
+		for (k = 0; k < lim; k++) {
+			if (b[k] == a) mask |= (uint32_t) 1 << k;
+		}
+		return mask;
+	}
+#endif
+}
+
 #endif /* SIMD_MATCH_H_ */
